@@ -130,7 +130,9 @@ public class AudioPlayer implements OnCompletionListener, OnPreparedListener, On
             this.player = null;
         }
         if (this.recorder != null) {
-            this.stopRecording(true);
+            if (this.state != STATE.MEDIA_STOPPED) {
+                this.stopRecording(true);
+            }
             this.recorder.release();
             this.recorder = null;
         }
@@ -151,8 +153,8 @@ public class AudioPlayer implements OnCompletionListener, OnPreparedListener, On
             this.audioFile = file;
             this.recorder = new MediaRecorder();
             this.recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            this.recorder.setOutputFormat(MediaRecorder.OutputFormat.RAW_AMR); // THREE_GPP);
-            this.recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB); //AMR_NB);
+            this.recorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS); // RAW_AMR);
+            this.recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); //AMR_NB);
             this.tempFile = generateTempFile();
             this.recorder.setOutputFile(this.tempFile);
             try {
@@ -197,8 +199,44 @@ public class AudioPlayer implements OnCompletionListener, OnPreparedListener, On
         if (size == 1) {
             String logMsg = "renaming " + this.tempFile + " to " + file;
             LOG.d(LOG_TAG, logMsg);
+
             File f = new File(this.tempFile);
-            if (!f.renameTo(new File(file))) LOG.e(LOG_TAG, "FAILED " + logMsg);
+            if (!f.renameTo(new File(file))) {
+
+                FileOutputStream outputStream = null;
+                File outputFile = null;
+                try {
+                    outputFile = new File(file);
+                    outputStream = new FileOutputStream(outputFile);
+                    FileInputStream inputStream = null;
+                    File inputFile = null;
+                    try {
+                        inputFile = new File(this.tempFile);
+                        LOG.d(LOG_TAG,  "INPUT FILE LENGTH: " + String.valueOf(inputFile.length()) );
+                        inputStream = new FileInputStream(inputFile);
+                        copy(inputStream, outputStream, false);
+                    } catch (Exception e) {
+                        LOG.e(LOG_TAG, e.getLocalizedMessage(), e);
+                   } finally {
+                        if (inputStream != null) try {
+                            inputStream.close();
+                            inputFile.delete();
+                            inputFile = null;
+                        } catch (Exception e) {
+                            LOG.e(LOG_TAG, e.getLocalizedMessage(), e);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    if (outputStream != null) try {
+                        outputStream.close();
+                        LOG.d(LOG_TAG, "OUTPUT FILE LENGTH: " + String.valueOf(outputFile.length()) );
+                    } catch (Exception e) {
+                        LOG.e(LOG_TAG, e.getLocalizedMessage(), e);
+                    }
+                }
+            }
         }
         // more than one file so the user must have pause recording. We'll need to concat files.
         else {
@@ -264,13 +302,16 @@ public class AudioPlayer implements OnCompletionListener, OnPreparedListener, On
                     this.recorder.stop();
                 }
                 this.recorder.reset();
-                this.tempFiles.add(this.tempFile);
+                if (!this.tempFiles.contains(this.tempFile)) {
+                    this.tempFiles.add(this.tempFile);
+                }
                 if (stop) {
                     LOG.d(LOG_TAG, "stopping recording");
                     this.setState(STATE.MEDIA_STOPPED);
                     this.moveFile(this.audioFile);
                 } else {
                     LOG.d(LOG_TAG, "pause recording");
+                    this.setState(STATE.MEDIA_PAUSED);
                 }
             }
             catch (Exception e) {
@@ -351,6 +392,13 @@ public class AudioPlayer implements OnCompletionListener, OnPreparedListener, On
             LOG.d(LOG_TAG, "AudioPlayer Error: stopPlaying() called during invalid state: " + this.state.ordinal());
             sendErrorStatus(MEDIA_ERR_NONE_ACTIVE);
         }
+    }
+
+    /**
+     * Resume playing.
+     */
+    public void resumePlaying() {
+    	this.startPlaying(this.audioFile);
     }
 
     /**
@@ -580,9 +628,9 @@ public class AudioPlayer implements OnCompletionListener, OnPreparedListener, On
                     return true;
                 case MEDIA_STOPPED:
                     //if we are readying the same file
-                    if (this.audioFile.compareTo(file) == 0) {
+                    if (file!=null && this.audioFile.compareTo(file) == 0) {
                         //maybe it was recording?
-                        if(this.recorder!=null && player==null) {
+                        if (player == null) {
                             this.player = new MediaPlayer();
                             this.player.setOnErrorListener(this);
                             this.prepareOnly = false;
